@@ -1,0 +1,240 @@
+import sqlite3
+import tkinter as tk
+from tkinter import messagebox
+from tkinter import ttk
+from tkcalendar import Calendar
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+
+# Conectar ao banco de dados SQLite (ou criar se não existir)
+conn = sqlite3.connect('recebimentos.db')
+cursor = conn.cursor()
+
+# Criar a tabela se não existir
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS recebimentos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mes TEXT,
+    data_recebimento TEXT,
+    descricao TEXT,
+    valor REAL,
+    forma_pagamento TEXT,
+    observacoes TEXT
+)
+''')
+
+# Inicializar a lista de recebimentos
+dados = {
+    "Mês": [],
+    "Data do Recebimento": [],
+    "Descrição do Serviço/Produto": [],
+    "Valor Recebido": [],
+    "Forma de Pagamento": [],
+    "Observações": []
+}
+
+# Função para carregar dados do banco de dados SQLite
+def carregar_dados():
+    dados["Mês"].clear()
+    dados["Data do Recebimento"].clear()
+    dados["Descrição do Serviço/Produto"].clear()
+    dados["Valor Recebido"].clear()
+    dados["Forma de Pagamento"].clear()
+    dados["Observações"].clear()
+
+    cursor.execute("SELECT * FROM recebimentos")
+    rows = cursor.fetchall()
+    total_valor = 0
+    for row in rows:
+        dados["Mês"].append(row[1])
+        dados["Data do Recebimento"].append(row[2])
+        dados["Descrição do Serviço/Produto"].append(row[3])
+        valor = row[4]
+        dados["Valor Recebido"].append(f"R$ {valor:,.2f}".replace('.', ','))
+        total_valor += valor
+        dados["Forma de Pagamento"].append(row[5])
+        dados["Observações"].append(row[6])
+
+    atualizar_tabela()
+    label_total.config(text=f"Valor Total: R$ {total_valor:,.2f}".replace('.', ','))
+
+# Função para abrir a subjanela de preenchimento de dados
+def abrir_subjanela():
+    subjanela = tk.Toplevel(janela)
+    subjanela.title("Adicionar Recebimento")
+
+    tk.Label(subjanela, text="Mês").grid(row=0, column=0)
+    combo_mes = ttk.Combobox(subjanela, values=[
+        "Janeiro", "Fevereiro", "Março", "Abril", "Maio",
+        "Junho", "Julho", "Agosto", "Setembro", "Outubro",
+        "Novembro", "Dezembro"])
+    combo_mes.grid(row=0, column=1)
+
+    tk.Label(subjanela, text="Data Inicial").grid(row=1, column=0)
+    entry_data_inicial = tk.Entry(subjanela)
+    entry_data_inicial.grid(row=1, column=1)
+    tk.Button(subjanela, text="Selecionar", command=lambda: abrir_calendario(entry_data_inicial)).grid(row=1, column=2)
+
+    tk.Label(subjanela, text="Data Final").grid(row=2, column=0)
+    entry_data_final = tk.Entry(subjanela)
+    entry_data_final.grid(row=2, column=1)
+    tk.Button(subjanela, text="Selecionar", command=lambda: abrir_calendario(entry_data_final)).grid(row=2, column=2)
+
+    tk.Label(subjanela, text="Descrição do Serviço/Produto").grid(row=3, column=0)
+    entry_descricao = tk.Entry(subjanela)
+    entry_descricao.grid(row=3, column=1)
+
+    tk.Label(subjanela, text="Valor Recebido").grid(row=4, column=0)
+    entry_valor = tk.Entry(subjanela)
+    entry_valor.grid(row=4, column=1)
+
+    tk.Label(subjanela, text="Forma de Pagamento").grid(row=5, column=0)
+    entry_forma = tk.Entry(subjanela)
+    entry_forma.grid(row=5, column=1)
+
+    tk.Label(subjanela, text="Observações").grid(row=6, column=0)
+    entry_observacoes = tk.Entry(subjanela)
+    entry_observacoes.grid(row=6, column=1)
+
+    tk.Button(subjanela, text="Adicionar Recebimento", command=lambda: adicionar_recebimento(
+        combo_mes.get(),
+        entry_data_inicial.get(),
+        entry_data_final.get(),
+        entry_descricao.get(),
+        entry_valor.get(),
+        entry_forma.get(),
+        entry_observacoes.get(),
+        subjanela)).grid(row=7, column=0, columnspan=2)
+
+# Função para adicionar dados
+def adicionar_recebimento(mes, data_inicial, data_final, descricao, valor, forma_pagamento, observacoes, subjanela):
+    try:
+        periodo = f"{data_inicial} até {data_final}"
+        valor_float = float(valor.replace(',', '.'))
+
+        # Adicionar ao banco de dados
+        cursor.execute('''
+        INSERT INTO recebimentos (mes, data_recebimento, descricao, valor, forma_pagamento, observacoes) 
+        VALUES (?, ?, ?, ?, ?, ?)''', (mes, periodo, descricao, valor_float, forma_pagamento, observacoes))
+        conn.commit()
+
+        # Atualizar dados em memória
+        carregar_dados()
+
+        messagebox.showinfo("Sucesso", "Recebimento adicionado com sucesso!")
+        subjanela.destroy()
+    except ValueError:
+        messagebox.showerror("Erro", "Por favor, insira um valor válido.")
+    except sqlite3.Error as e:
+        messagebox.showerror("Erro", f"Erro ao adicionar recebimento: {e}")
+
+# Função para atualizar a tabela
+def atualizar_tabela():
+    for item in tree.get_children():
+        tree.delete(item)
+
+    for i in range(len(dados["Mês"])):
+        tree.insert("", "end", values=(
+            dados["Mês"][i],
+            dados["Data do Recebimento"][i],
+            dados["Descrição do Serviço/Produto"][i],
+            dados["Valor Recebido"][i],
+            dados["Forma de Pagamento"][i],
+            dados["Observações"][i]
+        ))
+
+# Função para gerar PDF
+def gerar_pdf():
+    pdf_file = "recebimentos.pdf"
+    c = canvas.Canvas(pdf_file, pagesize=letter)
+
+    c.setFont("Helvetica", 10)
+    c.drawString(100, 750, "Relatório de Recebimentos")
+
+    y = 725
+    c.drawString(50, y, "Mês")
+    c.drawString(150, y, "Data do Recebimento")
+    c.drawString(300, y, "Descrição")
+    c.drawString(450, y, "Valor Recebido")
+    c.drawString(580, y, "Forma de Pagamento")
+    c.drawString(700, y, "Observações")
+    y -= 20
+
+    for i in range(len(dados["Mês"])):
+        c.drawString(50, y, dados["Mês"][i] if dados["Mês"][i] is not None else "")
+        c.drawString(150, y, dados["Data do Recebimento"][i] if dados["Data do Recebimento"][i] is not None else "")
+        
+        descricao = dados["Descrição do Serviço/Produto"][i]
+        if descricao is not None:
+            if len(descricao) > 30:
+                c.drawString(300, y, descricao[:30] + "...")
+                y -= 15
+                c.drawString(300, y, descricao[30:])
+            else:
+                c.drawString(300, y, descricao)
+        else:
+            c.drawString(300, y, "")
+        
+        valor_recebido = dados["Valor Recebido"][i] if dados["Valor Recebido"][i] is not None else ""
+        c.drawString(450, y, valor_recebido)
+        
+        c.drawString(580, y, dados["Forma de Pagamento"][i] if dados["Forma de Pagamento"][i] is not None else "")
+        c.drawString(700, y, dados["Observações"][i] if dados["Observações"][i] is not None else "")
+        y -= 20
+
+        if y < 50:
+            c.showPage()
+            c.setFont("Helvetica", 10)
+            y = 750
+            c.drawString(50, y, "Mês")
+            c.drawString(150, y, "Data do Recebimento")
+            c.drawString(300, y, "Descrição")
+            c.drawString(450, y, "Valor Recebido")
+            c.drawString(580, y, "Forma de Pagamento")
+            c.drawString(700, y, "Observações")
+            y -= 20
+
+    # Pega o valor total diretamente da label
+    total_text = label_total.cget("text")
+    valor_total = total_text.replace("Valor Total: ", "")
+
+    # Desenha o valor total no PDF
+    c.drawString(50, y, "Valor Total:")
+    c.drawString(450, y, valor_total)
+
+    c.save()
+    messagebox.showinfo("Sucesso", f"PDF gerado: {pdf_file}")
+
+# Função para abrir o calendário
+def abrir_calendario(entry):
+    def pegar_data():
+        data_selecionada = cal.get_date()
+        entry.delete(0, tk.END)
+        entry.insert(0, data_selecionada)
+        calendario_janela.destroy()
+
+    calendario_janela = tk.Toplevel(janela)
+    cal = Calendar(calendario_janela, selectmode='day')
+    cal.pack(pady=20)
+    tk.Button(calendario_janela, text="Selecionar", command=pegar_data).pack(pady=10)
+
+# Criar a janela principal
+janela = tk.Tk()
+janela.title("Registro de Recebimentos")
+
+tk.Button(janela, text="Adicionar Recebimento", command=abrir_subjanela).grid(row=0, column=0)
+tk.Button(janela, text="Gerar PDF", command=gerar_pdf).grid(row=0, column=1)
+
+tree = ttk.Treeview(janela, columns=("Mês", "Data do Recebimento", "Descrição", "Valor", "Forma de Pagamento", "Observações"), show='headings')
+for col in tree["columns"]:
+    tree.heading(col, text=col)
+tree.grid(row=1, column=0, columnspan=3, sticky='nsew')
+
+label_total = tk.Label(janela, text="Valor Total: R$ 0,00")
+label_total.grid(row=2, column=0, columnspan=3)
+
+janela.grid_rowconfigure(1, weight=1)
+carregar_dados()  # Chama a função após inicializar o dicionário
+
+janela.mainloop()
+conn.close()
